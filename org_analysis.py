@@ -8,6 +8,7 @@ import pandas as pd
 import logging
 import os
 from datetime import datetime
+import matplotlib.patheffects as path_effects
 
 CONFIG = loadConfig()
 
@@ -137,27 +138,62 @@ def print_repo_info(i):
   logger.info(f"Open issues: {i.get('open_issues_count')}")
 
 def create_histogram(df, xlabel, ylabel, title, fileName, fileDir):
-  plt.figure(figsize=(8, 6))
-  plt.hist(df, bins=30, edgecolor='black')
+  plt.rcParams['font.family'] = ['Quicksand', 'sans-serif']
+  plt.rcParams['font.size'] = 12
 
-  plt.xlabel(xlabel)
-  plt.ylabel(ylabel)
-  plt.title(title)
+  fig, ax = plt.subplots(figsize=(12, 12))
+  fig.patch.set_facecolor('floralwhite')
+  ax.set_facecolor('floralwhite')
+  
+  ax.hist(df, bins=30, color='lightskyblue', edgecolor='steelblue', linewidth=0.5)
+  ax.spines['top'].set_visible(False)
+  ax.spines['right'].set_visible(False)
+
+  ax.set_xlabel(xlabel, labelpad=25)
+  ax.set_ylabel(ylabel, labelpad=25)
+  ax.set_title(title, fontweight='bold', fontsize=16)
   plt.xticks(rotation=45)
-
-  plt.grid(True)
   plt.savefig(f"{fileDir}{fileName}_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.png")
 
-def create_pie(countSlice, labelSlice, title, fileName, fileDir):
+def create_pie(countSlice, labelSlice, title, fileName, fileDir, pieChartThreshold):
   def my_autopct(pct):
-    return f'{pct:.1f}%' if pct >= ANALYSIS_CONFIG.PIE_CHART_THRESHOLD * 100 else ''
+    return f'{pct:.1f}%' if pct >= pieChartThreshold * 100 else ''
 
-  texts = [text if size/countSlice.sum() >= ANALYSIS_CONFIG.PIE_CHART_THRESHOLD else '' for size, text in zip(countSlice, labelSlice)]
+  texts = [text if size/countSlice.sum() >= pieChartThreshold else '' for size, text in zip(countSlice, labelSlice)]
 
-  plt.figure(figsize=(10,10))
-  plt.pie(countSlice, radius=1.6, labels=texts, autopct=my_autopct, startangle=180, labeldistance=1.2, textprops={'fontsize': 10})
+  plt.figure(figsize=(15,15), facecolor='floralwhite')
+  
+  plt.rcParams['font.family'] = ['Quicksand', 'sans-serif']
+
+  # Create a donut chart by setting a wedge at the center
+  center_circle = plt.Circle((0,0), 0.50, fc='floralwhite')
+
+  plt.pie(
+    countSlice, 
+    radius=1, 
+    labels=texts, 
+    autopct=my_autopct,
+    pctdistance=0.75,
+    startangle=180, 
+    labeldistance=1.1,
+    colors=plt.cm.Set2.colors, 
+    wedgeprops={'edgecolor': 'white', 'linewidth': 1},
+    textprops={'fontsize': 14}
+  )
+
+  # Add the center circle to make it a donut chart
+  fig = plt.gcf()
+  fig.gca().add_artist(center_circle)
+
+  for text in plt.gca().texts[1::2]:  # Select every other text object (the labels)
+    text.set_color('white')
+    text.set_fontweight('bold')
+    text.set_fontsize(15)
+    text.set_fontname('Quicksand')
+    text.set_path_effects([path_effects.withStroke(linewidth=1, foreground='gray')])
+
   plt.axis('equal')
-  plt.title(title, pad=50, loc='center')
+  plt.title(title, pad=70, loc='center', fontweight='bold', fontsize=16)
   plt.savefig(f"{fileDir}{fileName}_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.png")
 
 def aggRepo(json, analysisConfig: OrgAnalysisConfig):
@@ -226,7 +262,7 @@ def repoOutput(repoStats, commitStats, analysisConfig: OrgAnalysisConfig):
 
     by_language = repoStats.groupby('language')["name"].count()
     by_language = by_language.sort_values(ascending=False)
-    create_pie(by_language, by_language.index, f"{analysisConfig.ORG_NAME} repos by language", f"{analysisConfig.ORG_NAME}_languages", analysisConfig.OUTPUT_PATH)
+    create_pie(by_language, by_language.index, f"{analysisConfig.ORG_NAME} repos by language", f"{analysisConfig.ORG_NAME}_languages", analysisConfig.OUTPUT_PATH, analysisConfig.PIE_CHART_THRESHOLD)
 
   if commitStats.empty == False:
     commitData = commitStats.groupby("date").agg({"avatar_url": "count"}).reset_index()
@@ -238,7 +274,7 @@ def repoOutput(repoStats, commitStats, analysisConfig: OrgAnalysisConfig):
     by_author = commitStats.groupby('login').agg({"avatar_url": "count", "type": "first"})
     by_author = by_author.sort_values("avatar_url", ascending=False)
     author_label = by_author.index.map(lambda x: f"{by_author.loc[x]['type']}:{x}")
-    create_pie(by_author["avatar_url"], author_label, f"{analysisConfig.ORG_NAME} commit authors for the last {analysisConfig.NUM_COMMITS} commits", f"{analysisConfig.ORG_NAME}_authors", analysisConfig.OUTPUT_PATH)
+    create_pie(by_author["avatar_url"], author_label, f"{analysisConfig.ORG_NAME} commit authors for the last {analysisConfig.NUM_COMMITS} commits", f"{analysisConfig.ORG_NAME}_authors", analysisConfig.OUTPUT_PATH, analysisConfig.PIE_CHART_THRESHOLD)
 
 
 def repo_info(json, analysisConfig: OrgAnalysisConfig):
