@@ -5,14 +5,24 @@ import math
 import argparse
 from config import loadConfig
 import pandas as pd
+import logging
+import os
+from datetime import datetime
 
 CONFIG = loadConfig()
 
-ORG_NAME = "pendle-finance"
-PER_PAGE = 100
-NUM_COMMITS = 100
-PIE_CHART_THRESHOLD = 0.02
-IGNORE_FORKS = True
+logging.basicConfig(filename='org_analysis.log', filemode='w', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+class OrgAnalysisConfig:
+  def __init__(self, orgName, perPage=100, numCommits=100, pieChartThreshold=0.02, ignoreForks=True, outputDir="output/"):
+    self.ORG_NAME = orgName
+    self.PER_PAGE = 100
+    self.NUM_COMMITS = 100
+    self.PIE_CHART_THRESHOLD = 0.02
+    self.IGNORE_FORKS = True
+    self.OUTPUT_PATH = f"{outputDir}/{self.ORG_NAME}/"
 
 ORG_URL = "https://api.github.com/orgs/{org_name}"
 ORG_MEMBERS_URL = "https://api.github.com/orgs/{org_name}/members"
@@ -27,24 +37,32 @@ REPO_COMMITS_URL = "https://api.github.com/repos/{org_name}/{repo_name}/commits?
 # COMMIT_COLUMNS = {'login': [], 'avatar_url':[],  'type': [], 'date': [], 'isFork':[]}
 # REPO_COLUMNS = {'name':[], 'description': [], 'updated_at': [], 'created_at': [], 'size':[], 'stars': [], 'watchers': [],  'language':[], "issues":[], "license": [], "isFork": [], "forkOf": []}
 
-def make_paged_request(url, num_entries, per_page=PER_PAGE, org_name=ORG_NAME, repo_name=""):
+def make_paged_request(url, num_entries, analysisConfig: OrgAnalysisConfig, repo_name=""):
   resp = []
   i = 1
+  per_page = analysisConfig.PER_PAGE
   while num_entries > 0:
     if num_entries < per_page:
       per_page = num_entries
 
-    if repo_name == "":
-      resp += make_request(url.format(org_name=org_name, page=i, per_page=per_page))
+    request_url = ""
+    if repo_name:
+      request_url = url.format(org_name=analysisConfig.ORG_NAME, repo_name=repo_name, page=i, per_page=per_page)
     else:
-      resp += make_request(url.format(org_name=org_name, repo_name=repo_name, page=i, per_page=per_page))
+      request_url = url.format(org_name=analysisConfig.ORG_NAME, page=i, per_page=per_page)
+
+    result = make_request(request_url)
+
+    if result:
+      resp += result
+
     num_entries -= per_page
     i += 1
 
   return resp
 
 def make_request(url):
-  print(f"Attempting GET: {url}") # TODO: logging
+  logger.info(f"Attempting GET: {url}")
 
   headers = {
       "Authorization": "Bearer " + CONFIG['GITHUB_API_KEY'],
@@ -56,34 +74,36 @@ def make_request(url):
   if response.status_code == 200:
       return response.json()
   else:
-      print(f"ERROR: {response.status_code}") # TODO: handle rate limit
+      logger.info(f"ERROR: {response.status_code}") # TODO: handle rate limit
 
 def pretty_json(j):
-  print(json.dumps(j, indent=2))
+  logger.info(json.dumps(j, indent=2))
 
-def org_info(j):
-  print()
-  print(f"Name: {j.get('name')}")
-  print(f"Created at: {j.get('created_at')}")
-  print(f"Updated at: {j.get('updated_at')}")
-  print(f"Number of public repos: {j.get('public_repos')}")
-  print(f"Number of followers: {j.get('followers')}")
-  print()
+def org_info(json):
+  if json == None:
+    logger.info(f"No org found with the name {ANALYSIS_CONFIG.ORG_NAME}. Exiting...")
+    exit()
+
+  logger.info(f"Name: {json.get('name')}")
+  logger.info(f"Created at: {json.get('created_at')}")
+  logger.info(f"Updated at: {json.get('updated_at')}")
+  logger.info(f"Number of public repos: {json.get('public_repos')}")
+  logger.info(f"Number of followers: {json.get('followers')}")
 
 def print_commit_info(i):
   pretty_json(i)
-  # print(f"Author: {i.get('author').get('login')}") # TODO: author object may be missing
-  # print(f"Avatar: {i.get('author').get('avatar_url')}")
-  # print(f"Type: {i.get('author').get('type')}")
-  # print(f"Date: {i.get('commit').get('committer').get('date')}")
-  # print(f"Message: {i.get('commit').get('message')}") # TODO: feed this and summarise with AI?
-  # print(f"Name: {i.get('committer').get('name')}")
+  # logger.info(f"Author: {i.get('author').get('login')}") # TODO: author object may be missing
+  # logger.info(f"Avatar: {i.get('author').get('avatar_url')}")
+  # logger.info(f"Type: {i.get('author').get('type')}")
+  # logger.info(f"Date: {i.get('commit').get('committer').get('date')}")
+  # logger.info(f"Message: {i.get('commit').get('message')}") # TODO: feed this and summarise with AI?
+  # logger.info(f"Name: {i.get('committer').get('name')}")
 
 def commit_info(j, isFork):
   commit_data = {'login': [], 'avatar_url':[],  'type': [], 'date': [], 'isFork':[]}
 
   for i in j:
-    print_commit_info(i)
+    # print_commit_info(i)
     if i.get('author') != None:
       commit_data['login'].append(i.get('author').get('login'))
       commit_data['avatar_url'].append(i.get('author').get('avatar_url'))
@@ -106,17 +126,17 @@ def commit_info(j, isFork):
 
 def print_repo_info(i):
   # pretty_json(i)
-  print(f"Name: {i.get('name')}")
-  print(f"Description: {i.get('description')}")
-  print(f"Created at: {i.get('created_at')}")
-  print(f"Updated at: {i.get('updated_at')}")
-  print(f"Size: {i.get('size')}kB")
-  print(f"Num stars: {i.get('stargazers_count')}")
-  print(f"Num watchers: {i.get('watchers_count')}")
-  print(f"Language: {i.get('language')}")
-  print(f"Open issues: {i.get('open_issues_count')}")
+  logger.info(f"Name: {i.get('name')}")
+  logger.info(f"Description: {i.get('description')}")
+  logger.info(f"Created at: {i.get('created_at')}")
+  logger.info(f"Updated at: {i.get('updated_at')}")
+  logger.info(f"Size: {i.get('size')}kB")
+  logger.info(f"Num stars: {i.get('stargazers_count')}")
+  logger.info(f"Num watchers: {i.get('watchers_count')}")
+  logger.info(f"Language: {i.get('language')}")
+  logger.info(f"Open issues: {i.get('open_issues_count')}")
 
-def create_histogram(df, xlabel, ylabel, title):
+def create_histogram(df, xlabel, ylabel, title, fileName, fileDir):
   plt.figure(figsize=(8, 6))
   plt.hist(df, bins=30, edgecolor='black')
 
@@ -126,26 +146,26 @@ def create_histogram(df, xlabel, ylabel, title):
   plt.xticks(rotation=45)
 
   plt.grid(True)
-  plt.show() # TODO: output this to file
+  plt.savefig(f"{fileDir}{fileName}_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.png")
 
-def create_pie(countSlice, labelSlice, title):
+def create_pie(countSlice, labelSlice, title, fileName, fileDir):
   def my_autopct(pct):
-    return f'{pct:.1f}%' if pct >= PIE_CHART_THRESHOLD * 100 else ''
+    return f'{pct:.1f}%' if pct >= ANALYSIS_CONFIG.PIE_CHART_THRESHOLD * 100 else ''
 
-  texts = [text if size/countSlice.sum() >= PIE_CHART_THRESHOLD else '' for size, text in zip(countSlice, labelSlice)]
+  texts = [text if size/countSlice.sum() >= ANALYSIS_CONFIG.PIE_CHART_THRESHOLD else '' for size, text in zip(countSlice, labelSlice)]
 
   plt.figure(figsize=(10,10))
   plt.pie(countSlice, radius=1.6, labels=texts, autopct=my_autopct, startangle=180, labeldistance=1.2, textprops={'fontsize': 10})
   plt.axis('equal')
   plt.title(title, pad=50, loc='center')
-  plt.show() # TODO: output this to file
+  plt.savefig(f"{fileDir}{fileName}_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.png")
 
-def repo_info(j):
-  count = len(j)
+def aggRepo(json, analysisConfig: OrgAnalysisConfig):
+  count = 10 # len(json) # used for testing to limit the number of repo's analysed
   commitStats = pd.DataFrame({'login': [], 'avatar_url':[],  'type': [], 'date': [], 'isFork':[]})
   repoStats = pd.DataFrame({'name':[], 'description': [], 'updated_at': [], 'created_at': [], 'size':[], 'stars': [], 'watchers': [],  'language':[], "issues":[], "license": [], "isFork": [], "forkOf": []})
 
-  for i in j:
+  for i in json:
     # print_repo_info(i)
     repoData = {'name':[], 'description': [], 'updated_at': [], 'created_at': [], 'size':[], 'stars': [], 'watchers': [],  'language':[], "issues":[], "license": [], "isFork": [], "forkOf": []}
     repoData['name'].append(i.get('name'))
@@ -159,17 +179,18 @@ def repo_info(j):
     repoData['issues'].append(i.get('open_issues_count'))
 
     if i.get('fork') == True:
-      # print(f"Repo: {ORG_NAME}/{i.get('name')} is a fork. Checking parent...")
+      # logger.info(f"Repo: {ANALYSIS_CONFIG.ANALYSIS_CONFIG.ORG_NAME}/{i.get('name')} is a fork. Checking parent...")
       repoData['isFork'].append(True)
-      full_repo_json = make_request(REPO_FULL_URL.format(org_name=ORG_NAME, repo_name=i.get('name')))
-      repoData["forkOf"].append(full_repo_json.get("parent").get("full_name"))
+      full_repo_json = make_request(REPO_FULL_URL.format(org_name=analysisConfig.ORG_NAME, repo_name=i.get('name')))
+      if full_repo_json:
+        repoData["forkOf"].append(full_repo_json.get("parent").get("full_name"))
     else:
-      # print(f"Repo: {ORG_NAME}/{i.get('name')} is not a fork. Reading commits...")
+      # logger.info(f"Repo: {ANALYSIS_CONFIG.ANALYSIS_CONFIG.ORG_NAME}/{i.get('name')} is not a fork. Reading commits...")
       repoData['isFork'].append(False)
       repoData['forkOf'].append(None)
 
-    if i.get('fork') == False or IGNORE_FORKS == False:
-      commits_json = make_paged_request(REPO_COMMITS_URL, NUM_COMMITS, org_name=ORG_NAME, repo_name=i.get('name'))
+    if i.get('fork') == False or analysisConfig.IGNORE_FORKS == False:
+      commits_json = make_paged_request(REPO_COMMITS_URL, analysisConfig.NUM_COMMITS, analysisConfig, repo_name=i.get('name'))
       commitStats = pd.concat([commitStats, commit_info(commits_json, False)], ignore_index=True)
 
     if i.get('license') != None:
@@ -184,61 +205,77 @@ def repo_info(j):
     if count <= 0:
       break
 
-  print(f"Done fetching repos for the {ORG_NAME} organization.\n")
+  logger.info(f"Done fetching repos for the {ANALYSIS_CONFIG.ORG_NAME} organization.\n")
 
   forkedRepos = repoStats[repoStats['isFork'] == True]
   forkedRepos = forkedRepos.loc[:, ['name', 'forkOf']]
   forkedRepos.drop_duplicates(inplace=True)
 
-  if len(forkedRepos) > 0:
-    print(f"Forked repos for {ORG_NAME}")
-    # display(HTML(forkedRepos.to_html(index=False))) TODO: output this to CSV
-    print()
-  else:
-    print(f"There are no forked repos on the {ORG_NAME} organization.\n")
+  return repoStats, commitStats, forkedRepos
 
-  if IGNORE_FORKS:
+def repoOutput(repoStats, commitStats, analysisConfig: OrgAnalysisConfig):
+  logger.info(f"Repos for {analysisConfig.ORG_NAME} GitHub analytics")
+  # if repoStats:
+  # display(HTML(repoStats.to_html(index=False))) TODO: output to CSV
+
+  if repoStats.empty == False:
+    create_histogram(repoStats["stars"], "Number of stars", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of stars', f"{analysisConfig.ORG_NAME}_stars", analysisConfig.OUTPUT_PATH)
+    create_histogram(repoStats["watchers"], "Number of watchers", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of watchers', f"{analysisConfig.ORG_NAME}_watchers", analysisConfig.OUTPUT_PATH)
+    create_histogram(repoStats["issues"], "Number of issues", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of issues', f"{analysisConfig.ORG_NAME}_issues", analysisConfig.OUTPUT_PATH)
+    create_histogram(repoStats["size"], "Size", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of sizes (kBs)', f"{analysisConfig.ORG_NAME}_sizes", analysisConfig.OUTPUT_PATH)
+
+    by_language = repoStats.groupby('language')["name"].count()
+    by_language = by_language.sort_values(ascending=False)
+    create_pie(by_language, by_language.index, f"{analysisConfig.ORG_NAME} repos by language", f"{analysisConfig.ORG_NAME}_languages", analysisConfig.OUTPUT_PATH)
+
+  if commitStats.empty == False:
+    commitData = commitStats.groupby("date").agg({"avatar_url": "count"}).reset_index()
+    commitData.sort_values("date", inplace=True)
+    commitData.rename(columns={'avatar_url': 'count'}, inplace=True)
+    commitData.set_index('date', inplace=True)
+    create_histogram(commitData.index, "Date", "Number of commits", f'{analysisConfig.ORG_NAME}: Histogram of commits', f"{analysisConfig.ORG_NAME}_commits", analysisConfig.OUTPUT_PATH)
+
+    by_author = commitStats.groupby('login').agg({"avatar_url": "count", "type": "first"})
+    by_author = by_author.sort_values("avatar_url", ascending=False)
+    author_label = by_author.index.map(lambda x: f"{by_author.loc[x]['type']}:{x}")
+    create_pie(by_author["avatar_url"], author_label, f"{analysisConfig.ORG_NAME} commit authors for the last {analysisConfig.NUM_COMMITS} commits", f"{analysisConfig.ORG_NAME}_authors", analysisConfig.OUTPUT_PATH)
+
+
+def repo_info(json, analysisConfig: OrgAnalysisConfig):
+  if json == None:
+    logger.info(f"No repos found for {analysisConfig.ORG_NAME}. Exiting...")
+    exit()
+
+  # call repoStats
+  repoStats, commitStats, forkedRepos = aggRepo(json, analysisConfig)
+
+  if len(forkedRepos) > 0:
+    logger.info(f"Forked repos for {analysisConfig.ORG_NAME}")
+    # display(HTML(forkedRepos.to_html(index=False))) TODO: output this to CSV
+  else:
+    logger.info(f"There are no forked repos on the {analysisConfig.ORG_NAME} organization.\n")
+
+  if analysisConfig.IGNORE_FORKS:
     commitStats = commitStats[(commitStats["type"] != "Bot") & (commitStats["isFork"] == False)]
     repoStats = repoStats[repoStats["isFork"] == False]
 
   if len(repoStats) <= 0:
-    print(f"There are no repositories on the {ORG_NAME} organization. Not generating graphs. Exiting... ")
+    logger.info(f"There are no repositories on the {analysisConfig.ORG_NAME} organization. Not generating graphs. Exiting... ")
     return
 
   if len(commitStats) <= 0:
-    print(f"There are no commits on repos on the {ORG_NAME} organization. Not generating graphs. Exiting... ")
+    logger.info(f"There are no commits on repos on the {analysisConfig.ORG_NAME} organization. Not generating graphs. Exiting... ")
     return
 
-  # TODO: generate image files to /ORG_NAME dir
-  print(f"Showing GitHub analytics for {ORG_NAME}")
+  # TODO: generate image files to /ANALYSIS_CONFIG.ORG_NAME dir
+  logger.info(f"Showing GitHub analytics for {analysisConfig.ORG_NAME}")
+  repoOutput(repoStats, commitStats, analysisConfig)
 
-  print(f"Repos for {ORG_NAME} GitHub analytics")
-  # display(HTML(repoStats.to_html(index=False))) TODO: output to CSV
-  print()
-
-  create_histogram(repoStats["stars"], "Number of stars", "Frequency", f'{ORG_NAME}: Histogram of stars')
-  create_histogram(repoStats["watchers"], "Number of watchers", "Frequency", f'{ORG_NAME}: Histogram of watchers')
-  create_histogram(repoStats["issues"], "Number of issues", "Frequency", f'{ORG_NAME}: Histogram of issues')
-  create_histogram(repoStats["size"], "Size", "Frequency", f'{ORG_NAME}: Histogram of sizes (kBs)')
-
-  data = commitStats.groupby("date").agg({"avatar_url": "count"}).reset_index()
-  data.sort_values("date", inplace=True)
-  data.rename(columns={'avatar_url': 'count'}, inplace=True)
-  data.set_index('date', inplace=True)
-  create_histogram(data.index, "Date", "Number of commits", f'{ORG_NAME}: Histogram of commits')
-
-  by_language = repoStats.groupby('language')["name"].count()
-  by_language = by_language.sort_values(ascending=False)
-  create_pie(by_language, by_language.index, f"{ORG_NAME} repos by language")
-
-  by_author = commitStats.groupby('login').agg({"avatar_url": "count", "type": "first"})
-  by_author = by_author.sort_values("avatar_url", ascending=False)
-  author_label = by_author.index.map(lambda x: f"{by_author.loc[x]['type']}:{x}")
-  create_pie(by_author["avatar_url"], author_label, f"{ORG_NAME} commit authors for the last {NUM_COMMITS} commits")
+  
 
 def org_members_info(j):
   if len(j) == 0:
-    print("No public org members.\n")
+    logger.info("No public org members.\n")
     return
 
   htmllist = []
@@ -265,41 +302,40 @@ def org_members_info(j):
   container += "</div>"
   # display(HTML(container)) TODO: output this to file
 
-def main():
-    print(f"STARTED: GitHub organisation analytics for {ORG_NAME}.\n")
-    print(f"1. Org info for {ORG_NAME}...")
-    org_json = make_request(ORG_URL.format(org_name=ORG_NAME))
-
-    if org_json == None:
-        print(f"No org found with the name {ORG_NAME}. Exiting...")
-        exit()
-
+def main(analysisConfig: OrgAnalysisConfig):
+    logger.info(f"STARTED: GitHub organisation analytics for {analysisConfig.ORG_NAME}.")
+    
+    logger.info(f"1. Org info for {analysisConfig.ORG_NAME}...")
+    org_json = make_request(ORG_URL.format(org_name=analysisConfig.ORG_NAME))
     org_info(org_json)
 
-    print(f"2. Public org member info for {ORG_NAME}...")
-    org_members_json = make_request(ORG_MEMBERS_URL.format(org_name=ORG_NAME))
-    org_members_info(org_members_json)
+    # logger.info(f"2. Public org member info for {analysisConfig.ORG_NAME}...")
+    # org_members_json = make_request(ORG_MEMBERS_URL.format(org_name=analysisConfig.ORG_NAME))
+    # org_members_info(org_members_json)
 
-    print(f"3. Repo and commit info for: {ORG_NAME}...")
-    repo_json = make_paged_request(ORG_REPO_URL, org_json.get('public_repos'))
-    repo_info(repo_json)
+    logger.info(f"3. Repo and commit info for: {analysisConfig.ORG_NAME}...")
+    repo_json = make_paged_request(ORG_REPO_URL, org_json.get('public_repos'), analysisConfig)
+    # pretty_json(repo_json)
+    repo_info(repo_json, analysisConfig)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Repository analysis script",
-        epilog="Example: python org.py --org-name pendle-finance --num-commits 100 --ignore-forks True --pie-chart-threshold 0.02"
-    )
+  parser = argparse.ArgumentParser(
+      description="Repository analysis script",
+      epilog="Example: python org.py --org-name pendle-finance --num-commits 100 --ignore-forks True --pie-chart-threshold 0.02 --output-dir 'output/'"
+  )
 
-    parser.add_argument("--org-name", default="", help="Organization name", required=True)
-    parser.add_argument("--num-commits", type=int, default=100, help="Number of commits to analyze")
-    parser.add_argument("--ignore-forks", type=bool, default=True, help="Ignore forked repositories")
-    parser.add_argument("--pie-chart-threshold", type=float, default=0.02, help="Pie chart threshold")
+  parser.add_argument("--org-name", default="", help="Organization name", required=True)
+  parser.add_argument("--num-commits", type=int, default=100, help="Number of commits to analyze")
+  parser.add_argument("--ignore-forks", type=bool, default=True, help="Ignore forked repositories")
+  parser.add_argument("--pie-chart-threshold", type=float, default=0.02, help="Pie chart threshold")
+  parser.add_argument("--output-dir", type=str, default="output/", help="Target output directory")
 
-    args = parser.parse_args()
+  args = parser.parse_args()
+  ANALYSIS_CONFIG = OrgAnalysisConfig(args.org_name, args.num_commits, args.ignore_forks, args.pie_chart_threshold, args.output_dir)
 
-    ORG_NAME = args.org_name
-    NUM_COMMITS = args.num_commits
-    IGNORE_FORKS = args.ignore_forks
-    PIE_CHART_THRESHOLD = args.pie_chart_threshold
+  if not os.path.exists(ANALYSIS_CONFIG.OUTPUT_PATH):
+    os.makedirs(ANALYSIS_CONFIG.OUTPUT_PATH)
 
-    main()
+  print(f"Running analysis for: {ANALYSIS_CONFIG.ORG_NAME}")
+  main(ANALYSIS_CONFIG)
+  print(f"Done.")
