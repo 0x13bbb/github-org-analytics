@@ -24,11 +24,19 @@ logger.setLevel(logging.INFO)
 class OrgAnalysisConfig:
   def __init__(self, orgName, perPage=100, numCommits=100, pieChartThreshold=0.02, ignoreForks=True, outputDir="output/"):
     self.ORG_NAME = orgName
-    self.PER_PAGE = 100
-    self.NUM_COMMITS = 100
-    self.PIE_CHART_THRESHOLD = 0.02
+    self.PER_PAGE = perPage
+    self.NUM_COMMITS = numCommits
+    self.PIE_CHART_THRESHOLD = pieChartThreshold
     self.IGNORE_FORKS = True
     self.OUTPUT_PATH = f"{outputDir}/{self.ORG_NAME}/"
+
+  def __str__(self):
+    return (f"Organization: {self.ORG_NAME}\n"
+            f"Per Page: {self.PER_PAGE}\n"
+            f"Number of Commits: {self.NUM_COMMITS}\n"
+            f"Pie Chart Threshold: {self.PIE_CHART_THRESHOLD}\n"
+            f"Ignore Forks: {self.IGNORE_FORKS}\n"
+            f"Output Path: {self.OUTPUT_PATH}")
 
 ORG_URL = "https://api.github.com/orgs/{org_name}"
 ORG_MEMBERS_URL = "https://api.github.com/orgs/{org_name}/members"
@@ -259,7 +267,7 @@ def create_pie(countSlice, labelSlice, title, fileName, fileDir, pieChartThresho
   plt.savefig(f"{fileDir}{fileName}_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.png")
 
 def aggRepo(json, analysisConfig: OrgAnalysisConfig, orgSummary: str):
-  count = 2 # len(json) # used for testing to limit the number of repo's analysed
+  count = 5 # len(json) # used for testing to limit the number of repo's analysed
   commitStats = pd.DataFrame({'login': [], 'avatar_url':[],  'type': [], 'date': [], 'isFork':[]})
   repoStats = pd.DataFrame({'name':[], 'description': [], 'updated_at': [], 'created_at': [], 'size':[], 'stars': [], 'watchers': [],  'language':[], "issues":[], "license": [], "isFork": [], "forkOf": [], "AICommitSummary": []})
 
@@ -326,7 +334,7 @@ def repoOutput(repoStats, commitStats, analysisConfig: OrgAnalysisConfig):
   logger.info(f"Repos for {analysisConfig.ORG_NAME} GitHub analytics")
 
   if repoStats.empty == False:
-    repoStats.to_json(f"{analysisConfig.OUTPUT_PATH}{analysisConfig.ORG_NAME}_repo_stats_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.json", index=True)
+    repoStats.to_json(f"{analysisConfig.OUTPUT_PATH}{analysisConfig.ORG_NAME}_repo_stats_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.json", orient='records')
     create_histogram(repoStats["stars"], "Number of stars", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of stars', f"{analysisConfig.ORG_NAME}_stars", analysisConfig.OUTPUT_PATH)
     create_histogram(repoStats["watchers"], "Number of watchers", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of watchers', f"{analysisConfig.ORG_NAME}_watchers", analysisConfig.OUTPUT_PATH)
     create_histogram(repoStats["issues"], "Number of issues", "Frequency", f'{analysisConfig.ORG_NAME}: Histogram of issues', f"{analysisConfig.ORG_NAME}_issues", analysisConfig.OUTPUT_PATH)
@@ -337,7 +345,7 @@ def repoOutput(repoStats, commitStats, analysisConfig: OrgAnalysisConfig):
     create_pie(by_language, by_language.index, f"{analysisConfig.ORG_NAME} repos by language", f"{analysisConfig.ORG_NAME}_languages", analysisConfig.OUTPUT_PATH, analysisConfig.PIE_CHART_THRESHOLD)
 
   if commitStats.empty == False:
-    commitStats.to_json(f"{analysisConfig.OUTPUT_PATH}{analysisConfig.ORG_NAME}_commit_stats_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.json", index=True)
+    commitStats.to_json(f"{analysisConfig.OUTPUT_PATH}{analysisConfig.ORG_NAME}_commit_stats_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.json", orient='records')
     commitData = commitStats.groupby("date").agg({"avatar_url": "count"}).reset_index()
     commitData.sort_values("date", inplace=True)
     commitData.rename(columns={'avatar_url': 'count'}, inplace=True)
@@ -398,6 +406,8 @@ def repo_info(json, analysisConfig: OrgAnalysisConfig, orgSummary: str):
   logger.info(f"AI response: {message.content[0].text}")
   logger.info(f"AI response tokens: {AI_client.count_tokens(message.content[0].text)}")
   AI_summary = message.content[0].text
+  with open(f"{analysisConfig.OUTPUT_PATH}{analysisConfig.ORG_NAME}_AI_summary_{datetime.now().isoformat(timespec='seconds').replace(':', '-')}.md", "w") as f:
+    f.write(AI_summary)
 
 def org_members_info(j, analysisConfig: OrgAnalysisConfig):
   if len(j) == 0:
@@ -437,9 +447,9 @@ def main(analysisConfig: OrgAnalysisConfig):
     org_json = make_request(ORG_URL.format(org_name=analysisConfig.ORG_NAME))
     org_summary = org_info(org_json, analysisConfig)
 
-    # logger.info(f"2. Public org member info for {analysisConfig.ORG_NAME}...")
-    # org_members_json = make_request(ORG_MEMBERS_URL.format(org_name=analysisConfig.ORG_NAME))
-    # org_members_info(org_members_json, analysisConfig)
+    logger.info(f"2. Public org member info for {analysisConfig.ORG_NAME}...")
+    org_members_json = make_request(ORG_MEMBERS_URL.format(org_name=analysisConfig.ORG_NAME))
+    org_members_info(org_members_json, analysisConfig)
 
     logger.info(f"3. Repo and commit info for: {analysisConfig.ORG_NAME}...")
     repo_json = make_paged_request(ORG_REPO_URL, org_json.get('public_repos'), analysisConfig)
